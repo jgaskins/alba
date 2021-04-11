@@ -37,17 +37,20 @@ module Alba
       # Serialize object into JSON string
       #
       # @param key [Symbol]
+      # @param included [Hash] determines what associations to be serialized. If not set, it serializes all associations.
       # @return [String] serialized JSON string
-      def serialize(key: nil)
+      def serialize(key: nil, included: true)
         key = key.nil? ? _key : key
-        hash = key && key != '' ? {key.to_s => serializable_hash} : serializable_hash
+        hash = key && key != '' ? {key.to_s => serializable_hash(included: included)} : serializable_hash(included: included)
         Alba.encoder.call(hash)
       end
 
       # A Hash for serialization
       #
+      # @param included [Hash] determines what associations to be serialized. If not set, it serializes all associations.
       # @return [Hash]
-      def serializable_hash
+      def serializable_hash(included: true)
+        @included = included
         collection? ? @object.map(&converter) : converter.call(@object)
       end
       alias to_hash serializable_hash
@@ -130,9 +133,29 @@ module Alba
         when Proc
           instance_exec(object, &attribute)
         when Alba::One, Alba::Many
-          attribute.to_hash(object, params: params)
+          included = check_included
+          return unless included
+
+          attribute.to_hash(object, params: params, included: included)
         else
           raise ::Alba::Error, "Unsupported type of attribute: #{attribute.class}"
+        end
+      end
+
+      def check_included
+        case @included
+        when Hash # Traverse included tree
+          @included.fetch(_key.to_sym, nil)
+        when Array # included tree ends with Array
+          @included.find { |item| item.to_sym == _key.to_sym } # Check if at least one item in the array matches current resource
+        when Symbol # included tree could end with Symbol
+          @included == _key.to_sym # Check if the symbol matches current resource
+        when true # In this case, Alba serializes all associations.
+          true
+        when nil, false # In these cases, Alba stops serialization here.
+          false
+        else
+          raise Alba::Error, "Unknown type for included option: #{@included.class}"
         end
       end
 
